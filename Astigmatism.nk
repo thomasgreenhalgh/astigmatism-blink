@@ -1,0 +1,88 @@
+version 16.0 v1
+Group {
+ inputs 1
+ name Astigmatism
+ addUserKnob {20 Astigmatism}
+ addUserKnob {26 about l "The blur is the lens aperture stretched into an ellipse. It is smallest and round at the circle of least confusion, and collapses to a short line at either end of Focus." +STARTLINE}
+ addUserKnob {12 center l "Optical Center" t "The point the effect radiates from. Only used when Track Format Center is off."}
+ center {960 540}
+ addUserKnob {6 centerOnFormat l "Track Format Center" -STARTLINE t "Keep the optical centre in the middle of the format. Turn off to place it with Optical Center."}
+ centerOnFormat true
+ addUserKnob {7 amount l "Amount (px)" t "Radius, in pixels, of the circle of least confusion at the corner of the frame. The line foci are twice this long." R 0 300}
+ amount 15
+ addUserKnob {7 focus l Focus t "Where the sensor sits between the two astigmatic foci. -1 is the sagittal focus, highlights streak outward like spokes. 0 is the circle of least confusion, the blur is round and at its smallest. +1 is the tangential focus, highlights streak around the centre." R -1 1}
+ focus -0.5
+ addUserKnob {26 field l FIELD +STARTLINE}
+ addUserKnob {7 falloffPower l "Falloff Power" t "How fast the blur grows away from the centre. 2 matches the physics of primary astigmatism, where it grows with the square of the field angle." R 0 6}
+ falloffPower 2
+ addUserKnob {7 innerRadius l "Inner Radius" t "Normalised distance from the centre at which the effect starts. 0 means it begins at the optical centre." R 0 1}
+ innerRadius 0
+ addUserKnob {7 aspect l "Field Aspect" t "Stretches the falloff shape vertically. Raise it for an anamorphic frame where the blur should grow faster toward the top and bottom." R 0.25 4}
+ aspect 1
+ addUserKnob {26 lens l LENS +STARTLINE}
+ addUserKnob {3 blades l "Aperture Blades" t "Number of iris blades. 0 keeps the aperture round. 5 to 8 give straight-sided bokeh." R 0 12}
+ blades 0
+ addUserKnob {7 bladeRotation l "Blade Rotation" -STARTLINE t "Rotates the iris, in degrees." R 0 360}
+ bladeRotation 0
+ addUserKnob {7 vignetting l "Optical Vignetting" t "Pinches out-of-focus highlights into a cat's eye toward the edges of the frame, the way a real lens barrel cuts the aperture." R 0 1.5}
+ vignetting 0.5
+ addUserKnob {7 bokehRim l "Bokeh Outline" t "Brightens the rim of the aperture so highlights pick up an outlined edge." R 0 3}
+ bokehRim 0.8
+ addUserKnob {7 edgeSoftness l "Edge Softness" t "How softly the aperture edge rolls off. Low values give a crisp iris, high values a gentle one." R 0 1}
+ edgeSoftness 0.3
+ addUserKnob {7 chroma l "Colour Fringing" t "Longitudinal colour. Positive values let the red blur grow larger than the blue, giving the coloured edge real lenses show." R -1 1}
+ chroma 0
+ addUserKnob {26 quality l QUALITY +STARTLINE}
+ addUserKnob {3 samples l Samples t "Samples taken per pixel. Raise it if bright highlights show grain. Cost scales directly with this." R 1 256}
+ samples 64
+ addUserKnob {7 minWidth l "Minimum Width" t "The thinnest the blur ellipse is allowed to get, in pixels, so a line focus stays a soft line rather than a hard one." R 0 5}
+ minWidth 0.75
+ addUserKnob {7 jitter l Dither t "Breaks up the sample pattern into fine grain. Turn it down for a smoother, more clinical result." R 0 2}
+ jitter 1
+ addUserKnob {7 mix l Mix t "Blends the effect back to the original image." R 0 1}
+ mix 1
+ addUserKnob {6 processAlpha l "Process Alpha" -STARTLINE t "Blur the alpha with the colour. Turn off to leave the alpha untouched."}
+ processAlpha true
+ addUserKnob {4 debugView l "Debug View" M {Result Falloff "Ellipse Axes"} t "Falloff shows how the blur strength grows across the frame. Ellipse Axes shows the radial blur in red and the tangential blur in green."}
+ debugView Result
+}
+ Input {
+  inputs 0
+  name Input
+  xpos 0
+  ypos -100
+ }
+ BlinkScript {
+  kernelSource "// Astigmatism kernel for Nuke 14+.\n//\n// Models the way a real lens renders a point when it suffers from astigmatism.\n// Off axis, the tangential and sagittal ray fans focus at two different depths,\n// so a point is never imaged as a point. It is imaged as the aperture opening,\n// stretched into an ellipse:\n//\n//   * Sagittal focus  (focus = -1): the ellipse collapses to a short line that\n//     points radially, like a spoke.\n//   * Circle of least confusion (focus = 0): the ellipse is a disc, and this is\n//     where the blur is smallest.\n//   * Tangential focus (focus = +1): the ellipse collapses to a short line that\n//     runs around the centre.\n//\n// The blur grows with the square of the distance from the optical centre, which\n// is how primary (Seidel) astigmatism behaves, so the middle of the frame stays\n// sharp and only the edges break down. The line foci are twice as long as the\n// circle of least confusion is wide, matching the geometry of the two ray fans.\n//\n// This is a gather blur: every output pixel averages samples taken over its own\n// ellipse. Because the weights are normalised, a flat area of colour is\n// unchanged and only detail and highlights pick up the shape, exactly as a real\n// defocused lens behaves.\n\nkernel AstigmatismKernel : ImageComputationKernel<ePixelWise>\n\{\n  Image<eRead, eAccessRandom, eEdgeClamped> src;\n  Image<eWrite> dst;\n\nparam:\n  float2 center;        // optical centre in pixels, used when centerOnFormat is off\n  bool centerOnFormat;  // place the optical centre at the format centre\n  float2 formatSize;    // format width and height, driven from the input format\n  float pixelAspect;    // format pixel aspect\n  float amount;         // circle-of-least-confusion radius, in pixels, at the frame corner\n  float focus;          // -1 sagittal (radial), 0 circle of least confusion, +1 tangential\n  float falloffPower;   // radial growth; 2 matches Seidel astigmatism\n  float innerRadius;    // normalised radius where the effect begins\n  float aspect;         // stretches the falloff shape vertically, for anamorphic lenses\n  int samples;          // taps per pixel\n  float edgeSoftness;   // width of the aperture edge roll-off\n  int blades;           // iris blades; 0 gives a round aperture\n  float bladeRotation;  // iris rotation in degrees\n  float vignetting;     // optical vignetting, pinching highlights into a cat's eye\n  float bokehRim;       // brightness of the aperture outline on highlights\n  float minWidth;       // smallest axis of the ellipse, in pixels\n  float chroma;         // longitudinal colour: red blur grows, blue blur shrinks\n  float jitter;         // per-pixel dither of the sample pattern\n  float mix;            // blend back to the input\n  bool processAlpha;\n  int debugView;        // 0 result, 1 falloff, 2 ellipse axes\n\nlocal:\n  float _halfDiag;\n  float _bladeRotation;\n\n  void define() \{\n    defineParam(center, \"center\", float2(960.0f, 540.0f));\n    defineParam(centerOnFormat, \"centerOnFormat\", true);\n    defineParam(formatSize, \"formatSize\", float2(1920.0f, 1080.0f));\n    defineParam(pixelAspect, \"pixelAspect\", 1.0f);\n    defineParam(amount, \"amount\", 15.0f);\n    defineParam(focus, \"focus\", -0.5f);\n    defineParam(falloffPower, \"falloffPower\", 2.0f);\n    defineParam(innerRadius, \"innerRadius\", 0.0f);\n    defineParam(aspect, \"aspect\", 1.0f);\n    defineParam(samples, \"samples\", 64);\n    defineParam(edgeSoftness, \"edgeSoftness\", 0.3f);\n    defineParam(blades, \"blades\", 0);\n    defineParam(bladeRotation, \"bladeRotation\", 0.0f);\n    defineParam(vignetting, \"vignetting\", 0.5f);\n    defineParam(bokehRim, \"bokehRim\", 0.8f);\n    defineParam(minWidth, \"minWidth\", 0.75f);\n    defineParam(chroma, \"chroma\", 0.0f);\n    defineParam(jitter, \"jitter\", 1.0f);\n    defineParam(mix, \"mix\", 1.0f);\n    defineParam(processAlpha, \"processAlpha\", true);\n    defineParam(debugView, \"debugView\", 0);\n  \}\n\n  void init() \{\n    float2 square = float2(formatSize.x * pixelAspect, formatSize.y);\n    _halfDiag = max(0.5f * length(square), 1.0f);\n    _bladeRotation = bladeRotation * 0.017453292f;\n  \}\n\n  float hash(int2 p) \{\n    float h = sin(float(p.x) * 12.9898f + float(p.y) * 78.233f) * 43758.5453f;\n    return h - floor(h);\n  \}\n\n  // 1 inside the aperture, falling to 0 at the rim.\n  float win(float limit, float x, float edge) \{\n    float inner = limit * (1.0f - edge);\n    float t = clamp((x - inner) / max(limit - inner, 0.0001f), 0.0f, 1.0f);\n    t = t * t * (3.0f - 2.0f * t);\n    return 1.0f - t;\n  \}\n\n  void process(int2 pos) \{\n    float4 original = src(pos.x, pos.y);\n\n    float2 opticalCenter = centerOnFormat\n      ? float2(formatSize.x * 0.5f, formatSize.y * 0.5f)\n      : center;\n\n    // Square-pixel position relative to the optical centre. Integer Blink\n    // coordinates address pixel centres, so the pixel centre sits at +0.5.\n    float2 p = float2(float(pos.x) + 0.5f, float(pos.y) + 0.5f);\n    float2 d = p - opticalCenter;\n    d.x *= pixelAspect;\n\n    float2 shaped = float2(d.x, d.y * max(aspect, 0.0001f));\n    float field = length(shaped) / _halfDiag;\n\n    float dist = length(d);\n    float2 radialDir = dist > 0.0001f ? d / dist : float2(1.0f, 0.0f);\n    float2 tangentDir = float2(-radialDir.y, radialDir.x);\n\n    float t = clamp((field - innerRadius) / max(1.0f - innerRadius, 0.0001f), 0.0f, 1.0f);\n    float falloff = pow(t, max(falloffPower, 0.0001f));\n    float radius = max(amount, 0.0f) * falloff;\n\n    if (debugView == 1) \{\n      dst() = float4(falloff, falloff, falloff, 1.0f);\n      return;\n    \}\n\n    // Semi-axes of the blur ellipse. At the circle of least confusion both\n    // equal radius; at either line focus the long axis is twice that and the\n    // short axis falls away to the minimum width.\n    float aRad = fabs(focus - 1.0f) * radius;\n    float aTan = fabs(focus + 1.0f) * radius;\n\n    if (debugView == 2) \{\n      float s = max(amount * 2.0f, 1.0f);\n      dst() = float4(aRad / s, aTan / s, field, 1.0f);\n      return;\n    \}\n\n    int n = samples;\n    if (n < 1) n = 1;\n    if (n > 256) n = 256;\n\n    // Sub-pixel blur is invisible, so leave the sharp centre of frame untouched.\n    float reach = (fabs(focus) + 1.0f) * radius;\n    float blend = clamp(mix, 0.0f, 1.0f);\n    if (reach < 0.5f || n == 1 || blend <= 0.0f) \{\n      dst() = original;\n      return;\n    \}\n\n    aRad = max(aRad, minWidth);\n    aTan = max(aTan, minWidth);\n\n    float edge = clamp(edgeSoftness, 0.01f, 0.9f);\n    bool shaped_aperture = blades >= 3;\n    float bladePeriod = shaped_aperture ? 6.28318531f / float(blades) : 1.0f;\n    float bladeCos = shaped_aperture ? cos(3.14159265f / float(blades)) : 1.0f;\n    float shift = max(vignetting, 0.0f) * clamp(field, 0.0f, 1.0f);\n    bool colourFringe = fabs(chroma) > 0.00001f;\n    float chromaR = 1.0f + chroma;\n    float chromaB = 1.0f - chroma;\n\n    const float goldenAngle = 2.39996323f;\n    float rotation = jitter * hash(pos) * 6.28318531f;\n\n    float4 sum = float4(0.0f);\n    float weightSum = 0.0f;\n\n    for (int i = 0; i < n; i++) \{\n      // Vogel spiral: evenly fills the unit disc, so the result is the aperture\n      // opening rather than a streak.\n      float rr = sqrt((float(i) + 0.5f) / float(n));\n      float theta = float(i) * goldenAngle + rotation;\n      float u = rr * cos(theta);\n      float v = rr * sin(theta);\n\n      float w = win(1.0f, rr, edge);\n\n      if (shaped_aperture) \{\n        float ang = theta + _bladeRotation;\n        ang = ang - floor(ang / bladePeriod) * bladePeriod;\n        float rmax = bladeCos / max(cos(ang - 0.5f * bladePeriod), 0.0001f);\n        w *= win(rmax, rr, edge);\n      \}\n\n      if (shift > 0.0f) \{\n        // A second circle sliding outward pinches the aperture into a cat's eye.\n        float cv = length(float2(u + shift, v));\n        w *= win(1.0f, cv, edge);\n      \}\n\n      if (bokehRim > 0.0f) \{\n        float rise = clamp((rr - 0.45f) / 0.35f, 0.0f, 1.0f);\n        rise = rise * rise * (3.0f - 2.0f * rise);\n        float fall = clamp((rr - 0.8f) / 0.2f, 0.0f, 1.0f);\n        fall = fall * fall * (3.0f - 2.0f * fall);\n        w *= 1.0f + bokehRim * rise * (1.0f - fall);\n      \}\n\n      // Map the round pupil onto this pixel's ellipse.\n      if (w > 0.0f) \{\n        float2 off = radialDir * (u * aRad) + tangentDir * (v * aTan);\n        off.x /= pixelAspect;\n\n        float sx = float(pos.x) + off.x;\n        float sy = float(pos.y) + off.y;\n        float4 s = bilinear(src, sx, sy);\n\n        if (colourFringe) \{\n          s.x = bilinear(src, float(pos.x) + off.x * chromaR, float(pos.y) + off.y * chromaR, 0);\n          s.z = bilinear(src, float(pos.x) + off.x * chromaB, float(pos.y) + off.y * chromaB, 2);\n        \}\n\n        sum += s * w;\n        weightSum += w;\n      \}\n    \}\n\n    if (weightSum <= 0.00001f) \{\n      dst() = original;\n      return;\n    \}\n\n    float4 result = sum / weightSum;\n    if (!processAlpha) result.w = original.w;\n    dst() = original + (result - original) * blend;\n  \}\n\};\n"
+  useGPUIfAvailable true
+  name AstigmatismKernel
+  xpos 0
+  ypos 0
+  center {{parent.center.x} {parent.center.y}}
+  centerOnFormat {{parent.centerOnFormat}}
+  formatSize {{format.w} {format.h}}
+  pixelAspect {{format.pixel_aspect}}
+  amount {{parent.amount}}
+  focus {{parent.focus}}
+  falloffPower {{parent.falloffPower}}
+  innerRadius {{parent.innerRadius}}
+  aspect {{parent.aspect}}
+  samples {{parent.samples}}
+  edgeSoftness {{parent.edgeSoftness}}
+  blades {{parent.blades}}
+  bladeRotation {{parent.bladeRotation}}
+  vignetting {{parent.vignetting}}
+  bokehRim {{parent.bokehRim}}
+  minWidth {{parent.minWidth}}
+  chroma {{parent.chroma}}
+  jitter {{parent.jitter}}
+  mix {{parent.mix}}
+  processAlpha {{parent.processAlpha}}
+  debugView {{parent.debugView}}
+ }
+ Output {
+  name Output1
+  xpos 0
+  ypos 100
+ }
+end_group
